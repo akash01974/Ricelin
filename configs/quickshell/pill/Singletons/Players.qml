@@ -135,9 +135,21 @@ Singleton {
     readonly property string artist: has ? Theme.joinArtists(active.trackArtists, active.trackArtist) : ""
     readonly property string trackUrl: urlOf(active)
     readonly property string artUrl: artUrlFor(active)
-    readonly property real lengthSec: has && active.length > 0 ? active.length : 0
+    readonly property real lengthSec: {
+        if (!has) return 0;
+        if (active.lengthSupported && active.length > 0)
+            return active.length;
+        // Browsers (Firefox/Zen…) deliver mpris:length a beat after a track
+        // loads or seeks. While it is missing, Quickshell would fall back to
+        // length == position and pin the bar at 100%; instead reuse the duration
+        // we confirmed for this exact track before, else report 0 (unknown) so
+        // the bar sits at the start until the player hands over a real length.
+        return root.lengthCache[root.lenKey] || 0;
+    }
+    /** Whether the current track has a usable total length (live/unknown is false). */
+    readonly property bool lengthKnown: has && lengthSec > 0
     /** A bogus near-INT64 length is how live streams report "no end". */
-    readonly property bool live: has && (lengthSec <= 0 || lengthSec > 86400)
+    readonly property bool live: has && (lengthSec > 86400)
     readonly property string source: serviceOf(active)
     readonly property string serviceLabel: source.length > 0
         ? source.charAt(0).toUpperCase() + source.slice(1) : ""
@@ -147,6 +159,108 @@ Singleton {
         return p ? ((p.dbusName || "") + "|" + (p.trackTitle || "") + "|" + artUrlFor(p)) : "";
     }
     readonly property string trackKey: has ? keyFor(active) : ""
+
+    /**
+     * Stable identity for the duration cache. Browser MPRIS swaps the art URL
+     * between visits (a local cached file vs. a remote URL) and YouTube URLs
+     * carry a list/index that may change, so key on the player plus a
+     * normalized track URL, falling back to the title.
+     */
+    function normUrl(u) {
+        var s = u ? u : "";
+        var q = s.indexOf("?");
+        if (q < 0)
+            return s;
+        var keep = [];
+        s.slice(q + 1).split("&").forEach(function (kv) {
+            var k = kv.split("=")[0];
+            if (k !== "list" && k !== "index")
+                keep.push(kv);
+        });
+        return keep.length > 0 ? s.slice(0, q) + "?" + keep.join("&") : s.slice(0, q);
+    }
+    function lenKeyFor(p) {
+        if (!p)
+            return "";
+        var id = normUrl(urlOf(p));
+        if (id.length === 0)
+            id = p.trackTitle ? p.trackTitle : "";
+        return id.length > 0 ? (p.dbusName || "") + "|" + id : "";
+    }
+    readonly property string lenKey: has ? lenKeyFor(active) : ""
+
+    /** Confirmed durations (seconds) per track, learned from real mpris:length. */
+    property var lengthCache: ({})
+    function rememberLength(key, val) {
+        if (!key || key.length === 0 || !(val > 0))
+            return;
+        var c = root.lengthCache;
+        if (c[key] === val)
+            return;
+        c[key] = val;
+        var keys = Object.keys(c);
+        if (keys.length > 48)
+            delete c[keys[0]];
+    }
+
+    /**
+     * Keep position fresh for players that do not push it on their own so a
+     * browser track still has live values before mpris:length arrives. Mirrors
+     * the MprisPlayer docs pattern (position is not reactive unless emitted).
+     */
+    Timer {
+        interval: 500
+        running: root.has && root.active.isPlaying && root.active.positionSupported && !root.active.lengthSupported
+        repeat: true
+        onTriggered: if (root.active) root.active.positionChanged()
+    }
+
+    /** Learn confirmed durations as players deliver them (browsers do it late). */
+    Connections {
+        target: root.active
+        function onLengthChanged() {
+            var p = root.active;
+            if (p && p.lengthSupported && p.length > 0)
+                root.rememberLength(root.lenKeyFor(p), p.length);
+        }
+    }
+
+    /**
+     * One-shot seek verification shared by the surface scrubber and the arrow
+     * keys. Browsers (Firefox/Zen…) ignore absolute SetPosition, so a beat
+     * after writing, if the player did not land near the target, re-issue the
+     * seek as the relative offset it actually honors. Clamps to a known length.
+     */
+    property real seekTarget: -1
+    property string seekKey: ""
+    function seekTo(seconds) {
+        var p = root.active;
+        if (!p || !p.canSeek)
+            return false;
+        var len = root.lengthSec;
+        var target = len > 0 ? Math.max(0, Math.min(len, seconds)) : seconds;
+        root.seekTarget = target;
+        root.seekKey = root.trackKey;
+        p.position = target;
+        return true;
+    }
+    Timer {
+        interval: 700
+        running: root.seekTarget >= 0
+        repeat: false
+        onTriggered: {
+            var p = root.active;
+            if (p && root.seekTarget >= 0) {
+                p.positionChanged();
+                var cur = p.position;
+                if (root.trackKey === root.seekKey && p.canSeek
+                        && Math.abs(cur - root.seekTarget) > 4
+                        && typeof p.seek === "function")
+                    p.seek(root.seekTarget - cur);
+            }
+            root.seekTarget = -1;
+        }
+    }
 
     /**
      * Fired when a player starts, pauses or changes track in a way worth a flash.

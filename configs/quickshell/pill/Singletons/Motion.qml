@@ -24,4 +24,24 @@ Singleton {
 
     /** Looping scan/pairing breath pulse. */
     readonly property int pulse: Math.round(420 * mult)
+
+    /**
+     * Content choreography: fractions of the body morph progress (0..1)
+     * that determine when incoming content begins to fade in and outgoing
+     * fades out. These are pure fractions — actual durations are derived by
+     * reduceMotion mult).
+     *
+     * NOTE: Ricelin does NOT use progress fractions for content choreography.
+     * Content fade is driven directly by morphCloseness (see Pill.qml face opacities).
+     * These fractions are kept for optional use but do not affect the core
+     * animation feel which is determined by morphCloseness-driven opacity.
+     */
+    readonly property real contentInAt: 0.1       // morphP threshold to start incoming ramp (optional)
+    readonly property real contentInSpan: 0.4     // progress span to fully visible (inAt .. inAt+span) (optional)
+    readonly property real contentOutSpan: 0.3    // progress span to fully fade out (0 .. outSpan) (optional)
+
+    /** OSD profile: a fast morph for transient overlays, ~200 ms scaled by mult. */
+    readonly property int osd: Math.round(200 * mult)
+
+    /** OSD profile: a fast morph for transient overlays, ~200 ms scaled by mult. */
 }

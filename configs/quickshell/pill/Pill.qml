@@ -292,6 +292,63 @@ Item {
     }
 
     /**
+     * Seek the active player by `deltaSec` seconds. Mirrors Media.qml's scrub
+     * gate (usable length, seekable) and clamps to the track bounds. Length
+     * comes from Players.lengthSec, not the raw player length: browsers often
+     * report length == position (no mpris:length yet), which made the clamp a
+     * no-op here.
+     */
+    function mediaSeek(deltaSec) {
+        var p = Players.active;
+        if (!p || !p.canSeek)
+            return false;
+        var len = Players.lengthSec;
+        if (len > 0 && len <= 86400) {
+            // Usable duration known: absolute nudge with the relative-seek
+            // fallback for browsers that ignore SetPosition.
+            Players.seekTo(p.position + deltaSec);
+        } else {
+            // No duration yet (typical browser pre-length state): a relative
+            // seek needs no length and the browser honors it natively.
+            if (typeof p.seek !== "function")
+                return false;
+            p.seek(deltaSec);
+        }
+        return true;
+    }
+
+    /**
+     * Hop to the next (`dir` 1) or previous (`dir` -1) track on the active
+     * player. Returns true when the player supports that direction.
+     */
+    function mediaSkip(dir) {
+        var p = Players.active;
+        if (!p)
+            return false;
+        if (dir > 0 && p.canGoNext) {
+            p.next();
+            return true;
+        }
+        if (dir < 0 && p.canGoPrevious) {
+            p.previous();
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Toggle play/pause on the active player. Returns true when a player
+     * consumed the toggle.
+     */
+    function mediaToggle() {
+        var p = Players.active;
+        if (!p || !p.canTogglePlaying)
+            return false;
+        p.togglePlaying();
+        return true;
+    }
+
+    /**
      * Forward an arrow-key nudge to the open recorder's focused audio fader.
      * Returns true when the recorder is open and a revealed fader consumed it.
      */
@@ -524,6 +581,14 @@ Item {
             ScreenRec.quickChoosing = false;
             ScreenRec.quickScreenChoosing = false;
         }
+    } else {
+        // When the surface closes, immediately clear hoverLatch so the pill
+        // does not remain in an expanded "hover" mode (e.g. launcher close
+        // leaves pillbar expanded for 300ms). The graceTimer still runs but
+        // pill.hoverLatch=false takes priority in the expanded calculation:
+        // expanded = surfaceOpen || held || hoverLatch.
+        pill.hoverLatch = false;
+        graceTimer.start();
     }
 
     QtObject {
@@ -584,6 +649,9 @@ Item {
         return 1 - Math.min(1, d / (110 * s));
     }
 
+    /** Single morph-progress [0..1] driven by the profile-scaled morphAnimP. */
+    property real morphP: 1
+
     /**
      * Gate the soul bead until the hover morph has arrived and its icons exist.
      * Fire it earlier and the bead aims at anchors that aren't laid out yet.
@@ -602,10 +670,22 @@ Item {
      */
     property string lastMode: "rest"
     property bool hoverHop: false
+    /**
+     * Duration (ms) of one full morph cycle for the current profile,
+     * already scaled by `Motion.mult` (reduceMotion). Used by both the
+     * body geometry Behaviors and the single `morphP` progress animation.
+     */
+    property int morphDur: hoverHop ? Math.round(260 * Motion.mult) : Math.round(420 * Motion.mult)
 
     onModeChanged: {
         hoverHop = (mode === "hover" || mode === "rest") && (lastMode === "hover" || lastMode === "rest");
         lastMode = mode;
+        // Restart the single morphP progress animation from 0→1 using the
+        // profile‑scaled duration; this is the centralized clock that drives
+        // all face entry/exit thresholds.
+        morphAnimP.running = true
+        morphAnimP.from = 0
+        morphAnimP.to = 1
         if (mode !== "hover") {
             hoverSoulGate = false;
             soulTarget = "";
@@ -625,9 +705,19 @@ Item {
         NumberAnimation { target: pill; property: "kanjiFlash"; to: 0; duration: 320; easing.type: Easing.OutCubic }
     }
 
-    Behavior on width { NumberAnimation { id: morphAnimW; duration: pill.hoverHop ? Motion.glide : Motion.morph; easing.type: Motion.easeMorph; easing.bezierCurve: Motion.morphCurve } }
-    Behavior on height { NumberAnimation { id: morphAnimH; duration: pill.hoverHop ? Motion.glide : Motion.morph; easing.type: Motion.easeMorph; easing.bezierCurve: Motion.morphCurve } }
-    Behavior on morphRadius { NumberAnimation { id: morphAnimR; duration: pill.hoverHop ? Motion.glide : Motion.morph; easing.type: Motion.easeMorph; easing.bezierCurve: Motion.morphCurve } }
+    NumberAnimation {
+        id: morphAnimP
+        target: pill
+        property: "morphP"
+        from: 0
+        to: 1
+        duration: pill.morphDur
+        easing.type: Easing.Linear
+    }
+
+    Behavior on width { NumberAnimation { id: morphAnimW; duration: pill.morphDur; easing.type: Motion.easeMorph; easing.bezierCurve: Motion.morphCurve } }
+    Behavior on height { NumberAnimation { id: morphAnimH; duration: pill.morphDur; easing.type: Motion.easeMorph; easing.bezierCurve: Motion.morphCurve } }
+    Behavior on morphRadius { NumberAnimation { id: morphAnimR; duration: pill.morphDur; easing.type: Motion.easeMorph; easing.bezierCurve: Motion.morphCurve } }
 
     /**
      * True while any morph axis animates. The body's effect layer (live drop
@@ -718,7 +808,13 @@ Item {
             GradientStop { position: 1.0; color: Qt.alpha(Theme.cardBot, Flags.pillOpacity) }
         }
 
-        layer.enabled: !pill.morphing
+        /**
+         * Shadow stays visible throughout the entire morph cycle so the pill
+         * never appears to "blink" on/off mid-transition (issue #6). The per-frame
+         * render cost is acceptable at 144 Hz; if profiling shows otherwise we
+         * can revisit with a smooth alpha fade instead.
+         */
+        layer.enabled: true
         layer.effect: MultiEffect {
             shadowEnabled: true
             shadowColor: Qt.rgba(0, 0, 0, Theme.shadowOpacity)
@@ -1219,7 +1315,7 @@ Item {
             spacing: 9 * pill.s
             opacity: osd.flashing && (osd.kind === "volume" || osd.kind === "brightness") ? 1 : 0
             visible: opacity > 0.01
-            Behavior on opacity { NumberAnimation { duration: Motion.fast } }
+            Behavior on opacity { NumberAnimation { duration: pill.mode === "rest" ? Motion.fast : Math.round(260 * Motion.mult) } }
 
             GlyphIcon {
                 anchors.verticalCenter: parent.verticalCenter
@@ -1263,7 +1359,7 @@ Item {
     Item {
         id: rest
         anchors.fill: parent
-        opacity: (pill.expanded || pill.dragActive || pill.mode === "game" || pill.mode === "toast" || pill.mode === "osd" || pill.mode === "quickChoose" || pill.mode === "quickCount") ? 0 : Math.pow(pill.morphCloseness, 1.5)
+        opacity: pill.mode === "rest" ? Math.pow(pill.morphCloseness, 1.5) : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: pill.mode === "rest" ? Motion.fast : Math.round(260 * Motion.mult) } }
 
@@ -1353,7 +1449,7 @@ Item {
         anchors.fill: parent
         opacity: pill.mode === "hover" ? Math.pow(pill.morphCloseness, 1.2) : 0
         visible: true
-        Behavior on opacity { NumberAnimation { duration: pill.mode === "hover" ? Motion.fast : 40 } }
+        Behavior on opacity { NumberAnimation { duration: pill.mode === "hover" ? Motion.fast : Motion.glide } }
 
         readonly property bool live: pill.mode === "hover"
 
@@ -1434,41 +1530,6 @@ Item {
                 id: statusRow
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 12 * pill.s
-
-                Row {
-                    id: weatherGlance
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: Weather.ready
-                    spacing: 5 * pill.s
-
-                    HoverHandler {
-                        cursorShape: Qt.PointingHandCursor
-                        enabled: hover.live
-                    }
-                    TapHandler {
-                        enabled: hover.live
-                        onTapped: pill.requestSurface("calendar")
-                    }
-
-                    GlyphIcon {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 16 * pill.s
-                        height: 16 * pill.s
-                        name: Weather.glyphFor(Weather.codeNow, Weather.isDay)
-                        color: Theme.subtle
-                        stroke: 1.8
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: Weather.tempNow + "°"
-                        color: Theme.subtle
-                        font.family: Theme.font
-                        font.pixelSize: 12.5 * pill.s
-                        font.weight: Font.Medium
-                        font.features: { "tnum": 1 }
-                    }
-                }
 
                 MinimizedTray {
                     id: minimized
@@ -2213,11 +2274,11 @@ Item {
 
     Osd {
         id: osd
+        // Fills the pill rect itself: the OSD's own content box applies the
+        // 18*s / 12*s padding internally and lays out at its settled size, so
+        // the fill never reflows while the pill morphs around it. Clipping in
+        // Osd.qml then reveals that fixed content as the pill grows.
         anchors.fill: parent
-        anchors.topMargin: 12 * pill.s
-        anchors.leftMargin: 18 * pill.s
-        anchors.rightMargin: 18 * pill.s
-        anchors.bottomMargin: 12 * pill.s
         s: pill.s
         screenName: pill.screenName
         suppressed: pill.surfaceOpen || pill.held

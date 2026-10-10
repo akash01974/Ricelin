@@ -54,6 +54,21 @@ Singleton {
         onLoadFailed: root.resolvedDir = ""
     }
 
+    /**
+     * The state file is the contract for what is on screen: watching it keeps
+     * `current` truthful for picks that never went through apply() — the
+     * random keybind, a CLI set, wallpaper.sh init — without waiting for the
+     * next full refresh.
+     */
+    FileView {
+        id: stateFile
+        path: root.stateFile
+        blockLoading: true
+        watchChanges: true
+        printErrors: false
+        onLoaded: root.current = stateFile.text().trim()
+    }
+
     function refresh() {
         if (resolveProc.running || thumbProc.running || listProc.running || stateProc.running) {
             pending = true;
@@ -79,16 +94,19 @@ Singleton {
     }
 
     /**
-     * wallpaper.sh blocks through the whole transition (awww wave, matugen,
-     * reload), easily 1-2s; a pick landing in that window used to be silently
-     * swallowed. Now the newest request is queued and replayed once the
-     * running transition exits, so rapid iteration converges on the last pick.
+     * `current` flips here, before wallpaper.sh runs a step (Caelestia's rule:
+     * display 0 ms — the marker moves now, the state file merely confirms it).
+     * The palette is kicked separately, debounced and killable, so applyProc
+     * returns right after the display and a pick landing mid-transition is
+     * still not swallowed: the newest request queues and replays, while the
+     * theme coalesces to the last pick.
      */
     property string queuedApply: ""
     property string queuedOutput: ""
 
     function apply(path, output) {
         var out = output === undefined ? "" : output;
+        root.current = path;
         if (applyProc.running) {
             queuedApply = path;
             queuedOutput = out;

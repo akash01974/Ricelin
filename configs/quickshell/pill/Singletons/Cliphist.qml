@@ -25,6 +25,7 @@ Singleton {
     property var entries: []
     readonly property int count: entries.length
     property bool pending: false
+    property int failCount: 0
 
     /**
      * False until one `cliphist list` succeeded, so the surface can tell a
@@ -180,13 +181,16 @@ Singleton {
         id: listProc
         command: ["cliphist", "list"]
         stdout: StdioCollector { id: collected }
-        onExited: {
-            if (listProc.exitCode !== 0) {
-                console.warn("cliphist list failed with exit code " + listProc.exitCode + ", retrying once");
+        onExited: function(exitCode) {
+            if (exitCode !== 0) {
+                root.failCount++;
+                console.warn("cliphist list failed with exit code " + exitCode + ", retrying once");
                 root.pending = false;
-                listRetry.restart();
+                if (root.failCount <= 3)
+                    listRetry.restart();
                 return;
             }
+            root.failCount = 0;
             root.applyList(collected.text);
             if (root.pending) {
                 root.pending = false;

@@ -26,17 +26,29 @@ Singleton {
     property bool active: false
 
     property bool available: false
-    readonly property bool wanted: Flags.musicViz && available
+
+    /**
+     * pipewire's `source = auto` no longer reliably resolves to the sink
+     * monitor on cava 1.0 — depending on the session it will grab the mic
+     * default source and the bars sit at zero whatever plays. Ask pactl for
+     * the default sink and point cava at its explicit monitor node.
+     */
+    property string sinkMonitor: ""
+
+    readonly property bool wanted: Flags.musicViz && available && sinkMonitor !== ""
 
     /**
      * autosens is off so a silent browser holding the sink stays at zero bars
      * instead of autosens amplifying the noise floor up to full range and tripping
      * the visualizer on dead silence. The trade is a fixed gain, tuned so real
      * music fills the bars while silence stays under the activate threshold.
+     * Measured on the default sink monitor: at 5500 every frame pegged at
+     * ascii_max_range during ordinary video audio (bars pinned full, no motion);
+     * 500 keeps loud passages peaking while the mid range sits near half height.
      */
     readonly property string config: "[general]\n"
-        + "bars = " + bars + "\nframerate = 60\nautosens = 0\nsensitivity = 5500\n"
-        + "[input]\nmethod = pipewire\nsource = auto\n"
+        + "bars = " + bars + "\nframerate = 60\nautosens = 0\nsensitivity = 500\n"
+        + "[input]\nmethod = pipewire\nsource = " + sinkMonitor + "\n"
         + "[output]\nmethod = raw\nraw_target = /dev/stdout\ndata_format = ascii\n"
         + "ascii_max_range = 1000\nbar_delimiter = 59\nframe_delimiter = 10\n"
         + "channels = mono\nmono_option = average\n"
@@ -49,6 +61,17 @@ Singleton {
         running: true
         command: ["sh", "-c", "command -v cava >/dev/null 2>&1"]
         onExited: (code) => root.available = (code === 0)
+    }
+
+    Process {
+        id: sinkProc
+        running: true
+        command: ["pactl", "get-default-sink"]
+        stdout: StdioCollector { id: sinkOut }
+        onExited: function(code) {
+            const sink = sinkOut.text.trim();
+            root.sinkMonitor = (code === 0 && sink.length > 0) ? sink + ".monitor" : "auto";
+        }
     }
 
     Process {

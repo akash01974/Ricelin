@@ -29,6 +29,27 @@ import "Singletons"
 PillSurface {
     id: root
 
+    // TEMP test hook: replays the onEntered/onExited bodies on request.
+    IpcHandler {
+        target: "wallpapertest"
+        function hoverSim(path: string): void {
+            console.log("[PREVIEW] hoverSim", path);
+            root.previewTarget = path;
+            previewTimer.restart();
+        }
+        function exitSim(path: string): void {
+            console.log("[PREVIEW] exitSim", path, "target", root.previewTarget);
+            if (root.previewTarget === path) {
+                root.previewTarget = "";
+                previewTimer.stop();
+            }
+        }
+        function commitSim(): void {
+            console.log("[PREVIEW] commitSim");
+            root.previewCommit();
+        }
+    }
+
     property int focusIndex: 0
 
     /**
@@ -135,11 +156,64 @@ PillSurface {
      */
     property bool previewArmed: true
 
+    /**
+     * Caelestia-style live preview: hovering a tile, or arrowing/wheeling onto
+     * one, puts it on the desktop after a 100 ms dwell — the same debounce its
+     * previewTimer uses against hover/keyboard spam. The first preview latches
+     * the wallpaper that was on screen as the rollback base; a tap, Enter or
+     * download commits, and closing the strip without committing restores the
+     * base. The dwell never fires a run per tile during a sweep, and the
+     * newest pick still wins through Walls.apply's queue plus the palette
+     * debounce behind it.
+     */
+    property string previewTarget: ""
+    property bool previewing: false
+    property string previewBase: ""
+
+    Timer {
+        id: previewTimer
+        interval: 100
+        onTriggered: if (root.previewTarget.length > 0) root.previewApply(root.previewTarget)
+    }
+
+    function previewApply(path) {
+        console.log("[PREVIEW] apply", path, "wasPreviewing", previewing, "base", previewBase, "current", Walls.current);
+        if (path === Walls.current)
+            return;
+        if (!previewing) {
+            previewing = true;
+            previewBase = Walls.current;
+        }
+        Walls.apply(path);
+    }
+
+    function previewCommit() {
+        previewing = false;
+        previewBase = "";
+    }
+
+    function previewRollback() {
+        console.log("[PREVIEW] rollback?", previewing, "base", previewBase, "current", Walls.current);
+        if (!previewing)
+            return;
+        previewing = false;
+        var base = previewBase;
+        previewBase = "";
+        if (base.length > 0 && base !== Walls.current)
+            Walls.apply(base);
+    }
+
     onFocusIndexChanged: {
         hintShown = false;
         hintDwell.restart();
         previewArmed = false;
         previewArm.restart();
+        // Keyboard and wheel browsing preview exactly like hover does; remote
+        // search results have no path and only ever apply through a tap.
+        var e = (focusIndex >= 0 && focusIndex < itemCount) ? items[focusIndex] : null;
+        previewTarget = (e && e.image === undefined && e.path) ? e.path : "";
+        console.log("[PREVIEW] focus", focusIndex, "target", previewTarget, "items", itemCount);
+        previewTimer.restart();
     }
 
     Timer {
@@ -205,6 +279,7 @@ PillSurface {
         if (focusIndex < 0 || focusIndex >= itemCount)
             return;
         var entry = items[focusIndex];
+        previewCommit();
         if (entry.image !== undefined) {
             if (dlProc.running)
                 return;
@@ -261,8 +336,19 @@ PillSurface {
         searchField.text = "";
         Walls.refresh();
         centerOnCurrent();
+        // Opening never previews: centering just fired onFocusIndexChanged,
+        // and its target may still be catching up with the state contract.
+        // Only a real browse gesture (hover, wheel, arrows) arms a preview.
+        previewTimer.stop();
+        previewTarget = "";
         hintShown = false;
         hintDwell.restart();
+    } else {
+        // Closing uncommitted sends the desktop back to the latched base.
+        console.log("[PREVIEW] surface closed, previewing", previewing, "base", previewBase);
+        previewTimer.stop();
+        previewTarget = "";
+        previewRollback();
     }
 
     Connections {
@@ -861,6 +947,13 @@ PillSurface {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
+                onEntered: {
+                    if (tile.remote)
+                        return;
+                    console.log("[PREVIEW] enter tile", tile.index, tile.modelData.path);
+                    root.previewTarget = tile.modelData.path;
+                    previewTimer.restart();
+                }
                 onPressed: {
                     if (!tile.focused)
                         return;
@@ -870,7 +963,15 @@ PillSurface {
                         trashHeat.press();
                 }
                 onReleased: if (tile.focused && !tile.remote) trashHeat.release()
-                onExited: trashHeat.cancel()
+                onExited: {
+                    trashHeat.cancel();
+                    // Stop the pending dwell unless another intent (the focus
+                    // or a different tile) already owns the target.
+                    if (root.previewTarget === tile.modelData.path) {
+                        root.previewTarget = "";
+                        previewTimer.stop();
+                    }
+                }
                 onClicked: if (!tile.focused) root.focusIndex = tile.index
             }
 
@@ -949,7 +1050,11 @@ PillSurface {
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: Walls.apply(tile.modelData.path, mrect.modelData.name)
+                                onClicked: {
+                                    // Explicit per-screen pick: commit the preview.
+                                    root.previewCommit();
+                                    Walls.apply(tile.modelData.path, mrect.modelData.name);
+                                }
                             }
                         }
                     }

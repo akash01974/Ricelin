@@ -43,6 +43,7 @@ PillSurface {
     onCoverSourceChanged: if (coverSource.length === 0) everReady = false
 
     readonly property real lengthSec: Players.lengthSec
+    readonly property bool lengthKnown: lengthSec > 0
     readonly property real positionSec: hasPlayer ? player.position : 0
     readonly property real playFrac: lengthSec > 0 ? Math.max(0, Math.min(1, positionSec / lengthSec)) : 0
     property real dragFrac: 0
@@ -290,10 +291,12 @@ PillSurface {
         anchors.bottomMargin: 36 * root.s
         height: 34 * root.s
 
-        readonly property string tail: root.live
-            ? " - Live"
-            : " / " + root.fmt(root.dragging ? root.dragFrac * root.lengthSec : root.positionSec)
-                + " - " + root.fmt(root.lengthSec)
+        readonly property string tail: !root.lengthKnown
+            ? " / " + root.fmt(root.positionSec) + " - --:--"
+            : (root.live
+                ? " - Live"
+                : " / " + root.fmt(root.dragging ? root.dragFrac * root.lengthSec : root.positionSec)
+                    + " - " + root.fmt(root.lengthSec))
 
         Item {
             id: infoRow
@@ -631,7 +634,7 @@ PillSurface {
             onPositionChanged: (e) => { if (pressed) root.dragFrac = fracAt(e.x); }
             onReleased: {
                 if (root.player)
-                    root.player.position = root.dragFrac * root.lengthSec;
+                    Players.seekTo(root.dragFrac * root.lengthSec);
                 root.dragging = false;
             }
         }

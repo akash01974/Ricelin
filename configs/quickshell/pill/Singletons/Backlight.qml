@@ -8,6 +8,8 @@ import Quickshell.Io
  * Osd, so watching /sys here keeps it a single loop instead of one per monitor.
  * `changed` fires on a new reading after the initial populate, so login doesn't
  * flash the OSD; the loop exits at once on machines without a backlight.
+ * The 100 ms cadence keeps the brightness OSD nearly as instant as the
+ * event-driven volume OSD (a sysfs cat is negligible to poll).
  */
 Singleton {
     id: root
@@ -19,7 +21,7 @@ Singleton {
     signal changed()
 
     Process {
-        command: ["sh", "-c", "dev=$(ls /sys/class/backlight 2>/dev/null | head -n1); [ -n \"$dev\" ] || exit 0; max=$(cat /sys/class/backlight/$dev/max_brightness); last=\"\"; while true; do val=$(cat /sys/class/backlight/$dev/brightness); if [ \"$val\" != \"$last\" ]; then echo \"$(( val * 100 / max ))\"; last=\"$val\"; fi; sleep 1; done"]
+        command: ["sh", "-c", "dev=$(ls /sys/class/backlight 2>/dev/null | head -n1); [ -n \"$dev\" ] || exit 0; max=$(cat /sys/class/backlight/$dev/max_brightness); last=\"\"; while true; do val=$(cat /sys/class/backlight/$dev/brightness); if [ \"$val\" != \"$last\" ]; then echo \"$(( val * 100 / max ))\"; last=\"$val\"; fi; sleep 0.1; done"]
         running: true
         stdout: SplitParser {
             onRead: (line) => {

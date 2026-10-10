@@ -7,6 +7,15 @@ import "Singletons"
 Item {
     id: root
 
+    /**
+     * Clip to the pill's rect. The rows below are laid out at their fixed
+     * settled size (contentW x contentH) and centred, so while the pill morphs
+     * open around them the content is revealed from the centre outward instead
+     * of being stretched to the transient pill width. Without this the progress
+     * fill's track width follows the morph and the fill visibly chases it.
+     */
+    clip: true
+
     property real s: 1
     property string screenName: ""
     property bool suppressed: false
@@ -19,11 +28,20 @@ Item {
     property int holdExtends: 0
 
     /**
+     * Live percentages, always in sync with hardware so the bar and label are
+     * correct the moment the OSD opens (no animate-from-0% on first flash).
+     */
+    readonly property real displayedVolumePct: Math.round(root.volume * 100)
+    readonly property real displayedBrightnessPct: Math.round(root.brightness * 100)
+
+    /**
      * The player the current flash speaks for. Normally the active source, but an
      * announce can point it at another player that just started, so a video over
      * your music still gets its own flash without stealing the surface.
      */
     property var pendingSubject: null
+
+    /** Volume/brightness progress bar */
     readonly property var subject: pendingSubject ? pendingSubject : Players.active
     readonly property bool subjectHas: subject !== null
     readonly property bool subjectPlaying: subjectHas && subject.isPlaying
@@ -51,6 +69,15 @@ Item {
     readonly property real desiredW: kind === "workspace" ? Math.max(120 * s, wsIndicator.implicitWidth + 40 * s)
         : (kind === "track" ? 344 * s : (kind === "record" ? 256 * s : 248 * s))
     readonly property real desiredH: kind === "track" ? 64 * s : 44 * s
+
+    /**
+     * The pill pads the OSD by 18*s left/right and 12*s top/bottom. Rows are
+     * pinned to this final inner box rather than `parent` (the animated pill
+     * rect) so the volume/brightness track has a constant width and the fill
+     * lands at the real percentage the moment the OSD opens.
+     */
+    readonly property real contentW: desiredW - 36 * s
+    readonly property real contentH: desiredH - 24 * s
 
     /**
      * Active workspace name on this monitor. Any switch (Super+arrow,
@@ -208,7 +235,9 @@ Item {
 
     Item {
         id: volRow
-        anchors.fill: parent
+        width: root.contentW
+        height: root.contentH
+        anchors.centerIn: parent
         opacity: root.kind === "volume" ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 150 } }
@@ -230,7 +259,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             width: 32 * root.s
             horizontalAlignment: Text.AlignRight
-            text: Math.round(root.volume * 100) + "%"
+            text: Math.round(root.displayedVolumePct) + "%"
             color: root.muted ? Theme.dim : Theme.cream
             font.family: Theme.font
             font.pixelSize: 11 * root.s
@@ -247,12 +276,14 @@ Item {
             height: 4 * root.s
             radius: 2 * root.s
             color: Theme.threadBg
+            clip: true
 
             Rectangle {
+                id: volBar
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                width: parent.width * root.volume
+                width: parent.width * (root.displayedVolumePct / 100)
                 radius: parent.radius
                 color: root.muted ? Theme.vermDim : Theme.vermLit
                 Behavior on width { NumberAnimation { duration: Motion.fast } }
@@ -263,7 +294,9 @@ Item {
 
     Item {
         id: trackRow
-        anchors.fill: parent
+        width: root.contentW
+        height: root.contentH
+        anchors.centerIn: parent
         opacity: root.kind === "track" ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 150 } }
@@ -371,7 +404,9 @@ Item {
 
     Item {
         id: brightRow
-        anchors.fill: parent
+        width: root.contentW
+        height: root.contentH
+        anchors.centerIn: parent
         opacity: root.kind === "brightness" ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 150 } }
@@ -393,7 +428,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             width: 32 * root.s
             horizontalAlignment: Text.AlignRight
-            text: Math.round(root.brightness * 100) + "%"
+            text: Math.round(root.displayedBrightnessPct) + "%"
             color: Theme.cream
             font.family: Theme.font
             font.pixelSize: 11 * root.s
@@ -410,12 +445,14 @@ Item {
             height: 4 * root.s
             radius: 2 * root.s
             color: Theme.threadBg
+            clip: true
 
             Rectangle {
+                id: brightBar
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                width: parent.width * root.brightness
+                width: parent.width * (root.displayedBrightnessPct / 100)
                 radius: parent.radius
                 color: Theme.vermLit
                 Behavior on width { NumberAnimation { duration: Motion.fast } }
@@ -425,7 +462,9 @@ Item {
 
     Item {
         id: batteryRow
-        anchors.fill: parent
+        width: root.contentW
+        height: root.contentH
+        anchors.centerIn: parent
         opacity: root.kind === "battery" ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 150 } }
@@ -506,7 +545,9 @@ Item {
 
     Item {
         id: workspaceRow
-        anchors.fill: parent
+        width: root.contentW
+        height: root.contentH
+        anchors.centerIn: parent
         opacity: root.kind === "workspace" ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 150 } }
@@ -523,7 +564,9 @@ Item {
 
     Item {
         id: recordRow
-        anchors.fill: parent
+        width: root.contentW
+        height: root.contentH
+        anchors.centerIn: parent
         opacity: root.kind === "record" ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 150 } }

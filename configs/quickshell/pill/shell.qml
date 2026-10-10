@@ -1,4 +1,5 @@
 //@ pragma UseQApplication
+//@ pragma IconTheme Papirus-Dark
 
 import QtQuick
 import QtQuick.Effects
@@ -264,7 +265,10 @@ ShellRoot {
              * True while this monitor's active workspace reports a fullscreen
              * client. The pill retracts off the top edge and the layer is
              * click-through so fullscreen content owns the screen, until a
-             * surface or a peek summons it back over the content.
+             * surface, a peek, or an OSD flash summons it back over the content.
+             * The OSD is exempt on purpose: volume/brightness/… feedback is
+             * genuinely useful over fullscreen video or a game, and the overlay
+             * layer renders above fullscreen windows.
              */
             readonly property bool monFullscreen: {
                 var mons = Hyprland.monitors.values;
@@ -278,7 +282,7 @@ ShellRoot {
                 return false;
             }
             readonly property bool summoned: modal || root.peekMon === modelData.name
-            readonly property bool pillHidden: monFullscreen && !summoned
+            readonly property bool pillHidden: monFullscreen && !summoned && !pill.osdActive
 
             onMonFullscreenChanged: if (monFullscreen) {
                 if (root.openMon === modelData.name) root.close();
@@ -358,14 +362,18 @@ ShellRoot {
                     e.accepted = pill.mixerStep(-1) || pill.recorderStep(-5) || pill.settingsMove(1);
                 }
                 Keys.onLeftPressed: (e) => {
-                    if (pill.mixerOpen) { pill.mixerFocusMove(-1); e.accepted = true; }
+                    if (pill.mediaOpen) {
+                        e.accepted = (e.modifiers & Qt.ControlModifier) ? pill.mediaSkip(-1) : pill.mediaSeek(-5);
+                    } else if (pill.mixerOpen) { pill.mixerFocusMove(-1); e.accepted = true; }
                     else if (pill.wallpaperOpen) { pill.wallpaperMove(-1); e.accepted = true; }
                     else if (pill.powerOpen) { pill.powerMove(-1); e.accepted = true; }
                     else if (pill.recorderOpen) { e.accepted = pill.recorderStep(-5); }
                     else if (pill.settingsLike) { pill.settingsAdjust(-1); e.accepted = true; }
                 }
                 Keys.onRightPressed: (e) => {
-                    if (pill.mixerOpen) { pill.mixerFocusMove(1); e.accepted = true; }
+                    if (pill.mediaOpen) {
+                        e.accepted = (e.modifiers & Qt.ControlModifier) ? pill.mediaSkip(1) : pill.mediaSeek(5);
+                    } else if (pill.mixerOpen) { pill.mixerFocusMove(1); e.accepted = true; }
                     else if (pill.wallpaperOpen) { pill.wallpaperMove(1); e.accepted = true; }
                     else if (pill.powerOpen) { pill.powerMove(1); e.accepted = true; }
                     else if (pill.recorderOpen) { e.accepted = pill.recorderStep(5); }
@@ -388,7 +396,10 @@ ShellRoot {
                     }
                     if (e.key !== Qt.Key_Return && e.key !== Qt.Key_Enter && e.key !== Qt.Key_Space)
                         return;
-                    if (pill.wallpaperOpen) {
+                    if (pill.mediaOpen) {
+                        if (!e.isAutoRepeat) pill.mediaToggle();
+                        e.accepted = true;
+                    } else if (pill.wallpaperOpen) {
                         if (!e.isAutoRepeat) pill.wallpaperActivate();
                         e.accepted = true;
                     } else if (pill.powerOpen) {

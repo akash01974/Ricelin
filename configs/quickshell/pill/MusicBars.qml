@@ -13,7 +13,7 @@ Row {
     id: root
 
     property real s: 1
-    property real span: 18
+    property real span: 28
 
     height: span * s
     spacing: 1.2 * s
